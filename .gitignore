@@ -1,0 +1,33 @@
+# Environnements virtuels Python
+.venv/
+venv/
+env/
+psc_env/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Notebooks Jupyter
+.ipynb_checkpoints/
+
+# Données, checkpoints, logs d'entraînement (souvent lourds, à ne jamais mettre sur git)
+data/
+datasets/
+*.ckpt
+*.pt
+*.pth
+wandb/
+outputs/
+lightning_logs/
+checkpoints/
+
+# Répertoire de cache de stable-worldmodel
+.stable_worldmodel/
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

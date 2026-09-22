@@ -1,0 +1,5 @@
+# Dépendance principale du projet — voir plan-action-couplage-jacobien-action.md
+stable-worldmodel[all]
+
+# Ajoutez ici toute dépendance supplémentaire que vous introduisez
+# (ex. matplotlib pour les figures, wandb si vous l'utilisez pour le suivi des runs)
