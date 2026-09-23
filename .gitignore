@@ -13,8 +13,11 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Données, checkpoints, logs d'entraînement (souvent lourds, à ne jamais mettre sur git)
-data/
-datasets/
+# Ancré à la racine (/data/) pour ne PAS ignorer scripts/train/config/data/,
+# qui contient les configs Hydra des datasets (pusht.yaml, ogb.yaml, ...),
+# pas des données elles-mêmes.
+/data/
+/datasets/
 *.ckpt
 *.pt
 *.pth
