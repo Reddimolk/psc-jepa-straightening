@@ -1,7 +1,16 @@
 dataset:
   num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
   frameskip: 5
-  name: pusht_expert_train.lance
+  # Identifiant HF (user/repo) plutot que le nom de fichier local :
+  # 'pusht_expert_train.lance' seul (sans '/') ne declenche jamais le
+  # telechargement auto de stable_worldmodel.data.load_dataset (qui exige
+  # un repo_id 'user/repo' pour resoudre via HuggingFace) -> le job
+  # echouait avec FileNotFoundError sur le cluster, rien n'etait mis en
+  # cache localement au prealable. Repo reel : huggingface.co/datasets/galilai-group/lewm-pusht
+  # (lien confirme dans le vrai README.md de stable-worldmodel), qui
+  # contient pusht_expert_train.lance en premiere entree .lance de premier
+  # niveau -> c'est celle-la qui sera telechargee et mise en cache.
+  name: galilai-group/lewm-pusht
   keys_to_load:
     - pixels
     - action
