@@ -56,11 +56,20 @@ class SaveCkptCallback(Callback):
 
 
 def lejepa_forward(self, batch, stage, cfg):
-    """encode observations, predict next states, compute losses."""
+    """encode observations, predict next states, compute losses.
+
+    L_jac (PSC) : regularise le jacobien local d f_theta / d a autour de la
+    derniere action de la fenetre de contexte, pour tester l'extension au cas
+    non lineaire de l'hypothese implicite du Theoreme 4.4 (B localement
+    constant). Voir claude/plan-action-couplage-jacobien-action.md (sketch V2).
+    Desactive par defaut (cfg.loss.jac.weight = 0.0).
+    """
 
     ctx_len = cfg.wm.history_size
     n_preds = cfg.wm.num_preds
     lambd = cfg.loss.sigreg.weight
+    lambd_jac = cfg.loss.jac.weight
+    eps_jac = cfg.loss.jac.eps
 
     # Replace NaN values with 0 (occurs at sequence boundaries)
     batch['action'] = torch.nan_to_num(batch['action'], 0.0)
@@ -79,7 +88,46 @@ def lejepa_forward(self, batch, stage, cfg):
     # LeWM loss
     output['pred_loss'] = (pred_emb - tgt_emb).pow(2).mean()
     output['sigreg_loss'] = self.sigreg(emb.transpose(0, 1))
-    output['loss'] = output['pred_loss'] + lambd * output['sigreg_loss']
+    total_loss = output['pred_loss'] + lambd * output['sigreg_loss']
+
+    if lambd_jac > 0:
+        # Action brute (pre-encodage) de la derniere position de la fenetre :
+        # c'est le a_t de la derivation, celui dont on regularise le jacobien.
+        a_last = batch['action'][:, ctx_len - 1]  # (B, action_dim)
+        u = torch.randn_like(a_last)
+        u = u / u.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        # action_encoder (Embedder = Conv1d kernel_size=1 + MLP) est ponctuel
+        # dans le temps : aucune fuite entre positions, on peut donc ré-encoder
+        # uniquement l'action perturbée sans toucher au reste de la fenêtre.
+        e_minus = self.model.action_encoder(
+            (a_last - eps_jac * u).unsqueeze(1)
+        ).squeeze(1)
+        e_plus = self.model.action_encoder(
+            (a_last + eps_jac * u).unsqueeze(1)
+        ).squeeze(1)
+
+        ctx_act_minus = ctx_act.clone()
+        ctx_act_minus[:, -1] = e_minus
+        ctx_act_plus = ctx_act.clone()
+        ctx_act_plus[:, -1] = e_plus
+
+        # Predicteur causal (attention is_causal=True) : seule la derniere
+        # position de la sortie depend de la derniere action -> on ne regarde
+        # que pred_emb[:, -1] pour un cosinus qui a un sens.
+        p0 = pred_emb[:, -1]
+        p_minus = self.model.predict(ctx_emb, ctx_act_minus)[:, -1]
+        p_plus = self.model.predict(ctx_emb, ctx_act_plus)[:, -1]
+
+        w_minus = p0 - p_minus
+        w_plus = p_plus - p0
+        cos_jac = torch.nn.functional.cosine_similarity(
+            w_minus, w_plus, dim=-1
+        )
+        output['jac_loss'] = (1 - cos_jac).mean()
+        total_loss = total_loss + lambd_jac * output['jac_loss']
+
+    output['loss'] = total_loss
 
     losses_dict = {
         f'{stage}/{k}': v.detach() for k, v in output.items() if 'loss' in k

@@ -91,3 +91,6 @@ loss:
     kwargs:
       knots: 17
       num_proj: 1024
+  jac:
+    weight: 0.0
+    eps: 1e-2
