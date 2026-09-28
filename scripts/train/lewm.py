@@ -16,11 +16,11 @@ from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
-from phase_space import MetricsCSV, PhaseSpaceLeWM, scal_terms
+from phase_space import MetricsLog, PhaseSpaceLeWM, scal_terms
 
-# Metriques par run dans $PSC_RUN_DIR/metrics.csv (cf. phase_space.MetricsCSV)
+# Metriques par run dans $PSC_RUN_DIR/metrics.jsonl (cf. phase_space.MetricsLog)
 METRICS = (
-    MetricsCSV(os.path.join(os.environ['PSC_RUN_DIR'], 'metrics.csv'))
+    MetricsLog(os.path.join(os.environ['PSC_RUN_DIR'], 'metrics.jsonl'))
     if os.environ.get('PSC_RUN_DIR')
     else None
 )

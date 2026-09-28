@@ -21,7 +21,7 @@ L_scal (section 5) : pour une sonde w (une par echantillon, ||w|| = 1),
 """
 
 import contextlib
-import csv
+import json
 import math
 import os
 import time
@@ -113,35 +113,28 @@ def scal_terms(model, z, u, act_emb, eps=1e-2):
             'gamma': gamma, 'jw': jw2.sqrt()}
 
 
-class MetricsCSV:
-    """Moyennes des metriques ecrites dans $PSC_RUN_DIR/metrics.csv (le logger
+class MetricsLog:
+    """Moyennes des metriques ecrites dans $PSC_RUN_DIR/metrics.jsonl (le logger
     Lightning est desactive quand wandb l'est : sans ca, rien n'est conserve).
-    Train : une ligne toutes les `every` iterations. Val : une ligne par passe
-    de validation complete (ecrite au premier appel train qui suit, ou a la fin)."""
+    Une ligne JSON par bloc. Train : toutes les `every` iterations. Val : une ligne
+    par passe de validation complete (ecrite au premier appel train qui suit, ou a
+    la fin)."""
 
     def __init__(self, path, every=200):
         self.path, self.every = path, every
-        self.acc, self.n, self.stage, self.last = {}, 0, None, (0, 0)
+        self.acc, self.cnt, self.n, self.stage, self.last = {}, {}, 0, None, (0, 0)
         self.t0 = time.time()
-        self._fh = None
 
     def _write(self):
         if not self.n:
             return
         row = {'time_s': round(time.time() - self.t0, 1), 'stage': self.stage,
                'epoch': self.last[0], 'step': self.last[1], 'n': self.n}
-        row.update({k: v / self.n for k, v in sorted(self.acc.items())})
-        new = self._fh is None
-        if new:
-            os.makedirs(os.path.dirname(self.path) or '.', exist_ok=True)
-            self._fh = open(self.path, 'a', newline='')
-            self._cols = None
-        if self._cols is None or set(row) - set(self._cols):
-            self._cols = list(row)
-            csv.writer(self._fh).writerow(self._cols)
-        csv.writer(self._fh).writerow([row.get(c, '') for c in self._cols])
-        self._fh.flush()
-        self.acc, self.n = {}, 0
+        row.update({k: self.acc[k] / self.cnt[k] for k in sorted(self.acc)})
+        os.makedirs(os.path.dirname(self.path) or '.', exist_ok=True)
+        with open(self.path, 'a') as f:
+            f.write(json.dumps(row) + '\n')
+        self.acc, self.cnt, self.n = {}, {}, 0
 
     def update(self, stage, epoch, step, values):
         if stage != self.stage:
@@ -151,6 +144,7 @@ class MetricsCSV:
             v = float(v)
             if math.isfinite(v):
                 self.acc[k] = self.acc.get(k, 0.0) + v
+                self.cnt[k] = self.cnt.get(k, 0) + 1
         self.n += 1
         self.last = (epoch, step)
         if stage in ('fit', 'train') and self.n >= self.every:
