@@ -94,3 +94,8 @@ loss:
   jac:
     weight: 0.0
     eps: 1e-2
+  # Idee 9 : actif seulement avec model._target_=phase_space.PhaseSpaceLeWM
+  scal:
+    weight: 0.0
+    eps: 1e-2
+    norm: pdf  # pdf : ||J_u w - gamma w||^2 ; inv : idem / ||J_u w||^2

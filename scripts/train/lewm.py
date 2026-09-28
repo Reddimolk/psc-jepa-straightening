@@ -16,6 +16,15 @@ from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
+from phase_space import MetricsCSV, PhaseSpaceLeWM, scal_terms
+
+# Metriques par run dans $PSC_RUN_DIR/metrics.csv (cf. phase_space.MetricsCSV)
+METRICS = (
+    MetricsCSV(os.path.join(os.environ['PSC_RUN_DIR'], 'metrics.csv'))
+    if os.environ.get('PSC_RUN_DIR')
+    else None
+)
+
 
 def get_img_preprocessor(source: str, target: str, img_size: int = 224):
     imagenet_stats = dt.dataset_stats.ImageNet
@@ -70,6 +79,7 @@ def lejepa_forward(self, batch, stage, cfg):
     lambd = cfg.loss.sigreg.weight
     lambd_jac = cfg.loss.jac.weight
     eps_jac = cfg.loss.jac.eps
+    lambd_scal = cfg.loss.scal.weight
 
     # Replace NaN values with 0 (occurs at sequence boundaries)
     batch['action'] = torch.nan_to_num(batch['action'], 0.0)
@@ -85,10 +95,42 @@ def lejepa_forward(self, batch, stage, cfg):
     tgt_emb = emb[:, n_preds:]  # label
     pred_emb = self.model.predict(ctx_emb, ctx_act)  # pred
 
+    # Idee 9 (espace des phases) : u_0 = z_0 - z_{-1} est inconnu, la position
+    # 0 de la fenetre est donc exclue de L_pred (et de L_scal).
+    phase = isinstance(self.model, PhaseSpaceLeWM)
+    first = 1 if phase else 0
+
     # LeWM loss
-    output['pred_loss'] = (pred_emb - tgt_emb).pow(2).mean()
+    output['pred_loss'] = (pred_emb[:, first:] - tgt_emb[:, first:]).pow(2).mean()
     output['sigreg_loss'] = self.sigreg(emb.transpose(0, 1))
     total_loss = output['pred_loss'] + lambd * output['sigreg_loss']
+
+    # Metrique comparable entre tous les bras : erreur sur la derniere position
+    # (celle utilisee en planification), normalisee par la variance de la cible.
+    with torch.no_grad():
+        mse_last = (pred_emb[:, -1] - tgt_emb[:, -1]).float().pow(2).mean()
+        metrics = {
+            'pred_last_mse': mse_last,
+            'pred_last_nmse': mse_last / tgt_emb[:, -1].float().var(0).mean(),
+        }
+
+    if phase:
+        # L_scal sur les positions a vitesse connue : (z_t, u_t, a_t), t >= 1.
+        # Calculee aussi quand lambd_scal = 0 (sans gradient), comme diagnostic.
+        z = ctx_emb[:, 1:]
+        u = ctx_emb[:, 1:] - ctx_emb[:, :-1]
+        flat = lambda x: x.reshape(-1, x.size(-1))
+        with torch.set_grad_enabled(lambd_scal > 0 and torch.is_grad_enabled()):
+            scal = scal_terms(self.model, flat(z), flat(u), flat(ctx_act[:, 1:]),
+                              eps=cfg.loss.scal.eps)
+        output['scal_loss'] = scal[cfg.loss.scal.norm].mean()
+        if lambd_scal > 0:
+            total_loss = total_loss + lambd_scal * output['scal_loss']
+        metrics.update({
+            'scal_pdf': scal['pdf'].mean(), 'scal_inv': scal['inv'].mean(),
+            'gamma_mean': scal['gamma'].mean(), 'gamma_std': scal['gamma'].std(),
+            'jw_norm': scal['jw'].mean(), 'u_norm': u.float().norm(dim=-1).mean(),
+        })
 
     if lambd_jac > 0:
         # Action brute (pre-encodage) de la derniere position de la fenetre :
@@ -133,6 +175,11 @@ def lejepa_forward(self, batch, stage, cfg):
         f'{stage}/{k}': v.detach() for k, v in output.items() if 'loss' in k
     }
     self.log_dict(losses_dict, on_step=True, sync_dist=True)
+
+    if METRICS is not None:
+        metrics.update({k: v for k, v in output.items() if 'loss' in k})
+        METRICS.update(stage, self.current_epoch, self.global_step,
+                       {k: v.detach().float().item() for k, v in metrics.items()})
     return output
 
 
@@ -258,6 +305,8 @@ def run(cfg):
     )
 
     manager()
+    if METRICS is not None:
+        METRICS.close()
     return
 
 
