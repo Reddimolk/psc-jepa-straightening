@@ -22,10 +22,16 @@ echo "checkpoint : $(hostname):$W" | tee "$PSC_RUN_DIR/checkpoint.txt"
 export STABLEWM_HOME=$HOME/psc/swm_home   # datasets (lecture seule ici)
 
 cd scripts/plan
-python eval_wm.py --config-name "$ENV" policy="$W" video=false \
-    output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" "$@" &
-PID=$!
-trap 'kill -TERM $PID 2>/dev/null' TERM INT
-wait $PID; RC=$?
-while kill -0 $PID 2>/dev/null; do wait $PID; RC=$?; done
+STOP=0; PID=
+trap '[ -n "$PID" ] && kill -TERM $PID 2>/dev/null; STOP=1' TERM INT
+# 2 essais : erreur CUDA sporadique observee dans le CEM (smoke test du 29/09)
+for TRY in 1 2; do
+    python eval_wm.py --config-name "$ENV" policy="$W" video=false \
+        output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" "$@" &
+    PID=$!
+    wait $PID; RC=$?
+    while kill -0 $PID 2>/dev/null; do wait $PID; RC=$?; done
+    if [ $RC -eq 0 ] || [ $STOP -eq 1 ]; then break; fi
+    echo "=== echec (rc=$RC), nouvel essai"
+done
 exit $RC

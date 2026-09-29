@@ -50,13 +50,17 @@ if [ -n "$W" ]; then
 fi
 
 if [ -n "$EVAL" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
-    echo "=== evaluation en planification ($EVAL_ENV $EVAL_ARGS) de $W"
-    ( export STABLEWM_HOME=$HOME/psc/swm_home
-      cd scripts/plan && exec python eval_wm.py --config-name "$EVAL_ENV" policy="$W" video=false \
-          output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" $EVAL_ARGS ) &
-    PID=$!
-    wait $PID; ERC=$?
-    while kill -0 $PID 2>/dev/null; do wait $PID; ERC=$?; done
-    echo "eval exit $ERC" > "$PSC_RUN_DIR/eval_exit_code"
+    # 2 essais : erreur CUDA sporadique observee dans le CEM (smoke test du 29/09)
+    for TRY in 1 2; do
+        echo "=== evaluation en planification ($EVAL_ENV $EVAL_ARGS) de $W, essai $TRY"
+        ( export STABLEWM_HOME=$HOME/psc/swm_home
+          cd scripts/plan && exec python eval_wm.py --config-name "$EVAL_ENV" policy="$W" video=false \
+              output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" $EVAL_ARGS ) &
+        PID=$!
+        wait $PID; ERC=$?
+        while kill -0 $PID 2>/dev/null; do wait $PID; ERC=$?; done
+        echo "eval exit $ERC (essai $TRY)" > "$PSC_RUN_DIR/eval_exit_code"
+        if [ $ERC -eq 0 ] || [ $STOP -eq 1 ]; then break; fi
+    done
 fi
 exit $RC
