@@ -2,18 +2,21 @@
 # Lance un entrainement sur une machine des salles info (appele par x-cluster/cluster.py,
 # depuis ~/psc/code, env conda active, PSC_RUN_DIR = ~/psc/runs/<job>).
 #
-#   bash scripts/cluster/run_job.sh keep|local [--eval pusht|reacher] <overrides hydra...>
+#   bash scripts/cluster/run_job.sh keep|local [--eval <env>[,override,...]] <overrides hydra...>
 #
 # Quota NFS de 30 Go : les checkpoints (Lightning + stable-pretraining + poids par epoque)
 # vont sur le disque local /tmp de la machine, pas dans le home. Le dataset reste lu depuis
 # le cache NFS (lien symbolique). Seuls metrics.jsonl / log / config restent dans PSC_RUN_DIR ;
 # avec `keep`, les derniers poids (~70 Mo) y sont aussi copies en fin de job.
 # Avec --eval <env>, le checkpoint final est evalue en planification juste apres
-# l'entrainement, sur la meme machine (resultat : $PSC_RUN_DIR/eval.json).
+# l'entrainement, sur la meme machine (resultat : $PSC_RUN_DIR/eval.json). Overrides de
+# l'evaluation separes par des virgules : --eval reacher,eval.num_eval=100
 set -u
 KEEP=$1; shift
 EVAL=
 if [ "${1:-}" = --eval ]; then EVAL=$2; shift 2; fi
+EVAL_ENV=${EVAL%%,*}
+EVAL_ARGS=$( [ "$EVAL" != "$EVAL_ENV" ] && echo "${EVAL#*,}" | tr ',' ' ' )
 JID=$(basename "$PSC_RUN_DIR")
 LOCAL=/tmp/$USER/psc/$JID
 mkdir -p "$LOCAL/swm_home" "$LOCAL/spt"
@@ -47,10 +50,10 @@ if [ -n "$W" ]; then
 fi
 
 if [ -n "$EVAL" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
-    echo "=== evaluation en planification ($EVAL) de $W"
+    echo "=== evaluation en planification ($EVAL_ENV $EVAL_ARGS) de $W"
     ( export STABLEWM_HOME=$HOME/psc/swm_home
-      cd scripts/plan && exec python eval_wm.py --config-name "$EVAL" policy="$W" video=false \
-          output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" ) &
+      cd scripts/plan && exec python eval_wm.py --config-name "$EVAL_ENV" policy="$W" video=false \
+          output.json="$PSC_RUN_DIR/eval.json" hydra.run.dir="$PSC_RUN_DIR/hydra_eval" $EVAL_ARGS ) &
     PID=$!
     wait $PID; ERC=$?
     while kill -0 $PID 2>/dev/null; do wait $PID; ERC=$?; done
