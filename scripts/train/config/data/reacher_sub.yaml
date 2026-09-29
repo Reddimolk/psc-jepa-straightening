@@ -1,0 +1,16 @@
+# Sous-ensemble du dataset Reacher officiel de LeWM (fracapuano/lewm-reacher,
+# repackage Lance de quentinll/lewm-reacher) : 9 premiers fragments = episodes
+# 0-2249 (452 250 frames, 3,7 Go), construit par ~/psc/tools/make_reacher_sub.py.
+# Le dataset complet (17,4 Go) ne tient pas dans le quota de 30 Go.
+# Chemin relatif a $STABLEWM_HOME/datasets/.
+dataset:
+  num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+  frameskip: 5
+  name: reacher-sub/train.lance
+  keys_to_load:
+    - pixels
+    - action
+    - observation
+  keys_to_cache:
+    - action
+    - observation

@@ -4,8 +4,14 @@ import os
 
 os.environ['MUJOCO_GL'] = 'egl'
 
+import json
+import sys
 import time
 from pathlib import Path
+
+# PSC : le modele Idee 9 (phase_space.PhaseSpaceLeWM) est reference par son
+# _target_ dans le config.json du checkpoint -> scripts/train doit etre importable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'train'))
 
 import hydra
 import numpy as np
@@ -29,10 +35,17 @@ def img_transform(cfg, dtype=torch.float32):
     return transform
 
 
+def episode_col(dataset):
+    """Nom de la colonne d'episode (repris de stable-worldmodel HEAD) : le
+    lecteur Lance exclut episode_idx/step_idx de column_names, mais les expose
+    via _schema_names et get_col_data. Sans ca, 0.1.1 choisit 'ep_idx' a tort."""
+    names = set(dataset.column_names)
+    names |= set(getattr(dataset, '_schema_names', ()))
+    return 'episode_idx' if 'episode_idx' in names else 'ep_idx'
+
+
 def get_episodes_length(dataset, episodes):
-    col_name = (
-        'episode_idx' if 'episode_idx' in dataset.column_names else 'ep_idx'
-    )
+    col_name = episode_col(dataset)
 
     episode_idx = dataset.get_col_data(col_name)
     step_idx = dataset.get_col_data('step_idx')
@@ -72,9 +85,7 @@ def run(cfg: DictConfig):
 
     dataset = get_dataset(cfg, cfg.eval.dataset_name)
     stats_dataset = dataset  # get_dataset(cfg, cfg.dataset.stats)
-    col_name = (
-        'episode_idx' if 'episode_idx' in dataset.column_names else 'ep_idx'
-    )
+    col_name = episode_col(dataset)
     ep_indices, _ = np.unique(
         stats_dataset.get_col_data(col_name), return_index=True
     )
@@ -99,7 +110,7 @@ def run(cfg: DictConfig):
         model = swm.wm.utils.load_pretrained(cfg.policy)
         if cfg.get('bf16', False):
             model = model.to(torch.bfloat16)
-        model = model.to('cuda')
+        model = model.to(cfg.get('device', 'cuda'))
         model = model.eval()
         model.requires_grad_(False)
         model.interpolate_pos_encoding = True
@@ -129,6 +140,8 @@ def run(cfg: DictConfig):
         if cfg.policy != 'random'
         else Path(__file__).parent
     )
+    # PSC : videos desactivables (temps + disque), cf. cfg.video
+    video = results_path if cfg.get('video', True) else None
 
     # sample the episodes and the starting indices
     episode_len = get_episodes_length(dataset, ep_indices)
@@ -137,9 +150,6 @@ def run(cfg: DictConfig):
         ep_id: max_start_idx[i] for i, ep_id in enumerate(ep_indices)
     }
     # Map each dataset row’s episode_idx to its max_start_idx
-    col_name = (
-        'episode_idx' if 'episode_idx' in dataset.column_names else 'ep_idx'
-    )
     max_start_per_row = np.array(
         [max_start_idx_dict[ep_id] for ep_id in dataset.get_col_data(col_name)]
     )
@@ -159,8 +169,9 @@ def run(cfg: DictConfig):
 
     print(random_episode_indices)
 
-    eval_episodes = dataset.get_row_data(random_episode_indices)[col_name]
-    eval_start_idx = dataset.get_row_data(random_episode_indices)['step_idx']
+    # get_col_data (et non get_row_data, qui omet les colonnes d'index Lance)
+    eval_episodes = dataset.get_col_data(col_name)[random_episode_indices]
+    eval_start_idx = dataset.get_col_data('step_idx')[random_episode_indices]
 
     if len(eval_episodes) < cfg.eval.num_eval:
         raise ValueError(
@@ -199,7 +210,7 @@ def run(cfg: DictConfig):
                 callables=OmegaConf.to_container(
                     cfg.eval.get('callables'), resolve=True
                 ),
-                video=results_path,
+                video=video,
             )
         print('Warmup done.')
 
@@ -214,11 +225,26 @@ def run(cfg: DictConfig):
             callables=OmegaConf.to_container(
                 cfg.eval.get('callables'), resolve=True
             ),
-            video=results_path,
+            video=video,
         )
     end_time = time.time()
 
     print(metrics)
+    if cfg.output.get('json'):
+        # PSC : resultat machine-lisible (taux de succes + succes par episode,
+        # sur les memes paires depart/but pour tous les modeles a seed egale)
+        out = {
+            'policy': str(cfg.policy),
+            'seed': int(cfg.seed),
+            'num_eval': int(cfg.eval.num_eval),
+            'success_rate': float(metrics['success_rate']),
+            'episode_successes': np.asarray(metrics['episode_successes']).astype(int).tolist(),
+            'episodes': np.asarray(eval_episodes).tolist(),
+            'start_steps': np.asarray(eval_start_idx).tolist(),
+            'evaluation_time_s': time.time() - start_time,
+        }
+        Path(cfg.output.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(cfg.output.json).write_text(json.dumps(out))
     print(f'[eval] videos saved to {results_path.resolve()}')
 
     results_path = results_path / cfg.output.filename

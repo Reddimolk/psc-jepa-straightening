@@ -42,6 +42,7 @@ optimizer:
 wm:
   history_size: 3
   num_preds: 1
+  phase_include_first: false  # Idee 9 : garder la position 0 (u_0 = 0) dans L_pred
 
 model:
   _target_: stable_worldmodel.wm.lewm.LeWM

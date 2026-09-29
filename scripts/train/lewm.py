@@ -95,10 +95,14 @@ def lejepa_forward(self, batch, stage, cfg):
     tgt_emb = emb[:, n_preds:]  # label
     pred_emb = self.model.predict(ctx_emb, ctx_act)  # pred
 
-    # Idee 9 (espace des phases) : u_0 = z_0 - z_{-1} est inconnu, la position
-    # 0 de la fenetre est donc exclue de L_pred (et de L_scal).
+    # Idee 9 (espace des phases) : u_0 = z_0 - z_{-1} est inconnu (u_0 = 0 par
+    # convention). Par defaut la position 0 est exclue de L_pred ; avec
+    # wm.phase_include_first=true elle est gardee, pour que le modele sache
+    # predire sans vitesse connue -- c'est le cas du premier pas de
+    # planification (stable-worldmodel 0.1.1 ne donne qu'une frame de contexte).
+    # L_scal ne porte jamais sur la position 0.
     phase = isinstance(self.model, PhaseSpaceLeWM)
-    first = 1 if phase else 0
+    first = 1 if phase and not cfg.wm.get('phase_include_first', False) else 0
 
     # LeWM loss
     output['pred_loss'] = (pred_emb[:, first:] - tgt_emb[:, first:]).pow(2).mean()
