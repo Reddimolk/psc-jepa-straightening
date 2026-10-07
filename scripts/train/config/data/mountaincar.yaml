@@ -1,0 +1,13 @@
+# Dataset collecte par scripts/data/collect_gym.py (07/10/2026) : 3000 episodes de
+# 200 pas, politique aleatoire correlee (Ornstein-Uhlenbeck), etats initiaux larges.
+# Environnement psc/MountainCarGoal-v0 (scripts/train/gym_goal.py).
+# Chemin relatif a $STABLEWM_HOME/datasets/.
+dataset:
+  num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+  frameskip: 5
+  name: mountaincar/train.lance
+  keys_to_load:
+    - pixels
+    - action
+  keys_to_cache:
+    - action

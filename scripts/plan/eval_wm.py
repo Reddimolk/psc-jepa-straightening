@@ -12,6 +12,7 @@ from pathlib import Path
 # PSC : le modele Idee 9 (phase_space.PhaseSpaceLeWM) est reference par son
 # _target_ dans le config.json du checkpoint -> scripts/train doit etre importable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'train'))
+import gym_goal  # noqa: E402,F401  (enregistre psc/PendulumGoal-v0, psc/MountainCarGoal-v0)
 
 import hydra
 import numpy as np

@@ -100,3 +100,4 @@ loss:
     weight: 0.0
     eps: 1e-2
     norm: pdf  # pdf : ||J_u w - gamma w||^2 ; inv : idem / ||J_u w||^2
+    probe: random  # random : w aleatoire ; u : w = u_t / ||u_t|| (direction visitee)

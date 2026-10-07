@@ -119,22 +119,44 @@ def lejepa_forward(self, batch, stage, cfg):
         }
 
     if phase:
-        # L_scal sur les positions a vitesse connue : (z_t, u_t, a_t), t >= 1.
-        # Calculee aussi quand lambd_scal = 0 (sans gradient), comme diagnostic.
-        z = ctx_emb[:, 1:]
-        u = ctx_emb[:, 1:] - ctx_emb[:, :-1]
-        flat = lambda x: x.reshape(-1, x.size(-1))
-        with torch.set_grad_enabled(lambd_scal > 0 and torch.is_grad_enabled()):
-            scal = scal_terms(self.model, flat(z), flat(u), flat(ctx_act[:, 1:]),
-                              eps=cfg.loss.scal.eps)
-        output['scal_loss'] = scal[cfg.loss.scal.norm].mean()
+        # L_scal au dernier pas de la fenetre : J_u = d h / d u_t, le reste de la
+        # fenetre fixe. Sonde de la loss : loss.scal.probe ('random' | 'u'). Les
+        # deux sondes sont toujours mesurees (sans gradient pour l'autre), et la
+        # loss est calculee meme quand lambd_scal = 0, comme diagnostic.
+        model = self.model
+        u = model.velocity(ctx_emb)
+        probe = cfg.loss.scal.get('probe', 'random')
+        terms = {}
+        for pr in ('random', 'u'):
+            train_it = pr == probe and lambd_scal > 0 and torch.is_grad_enabled()
+            with torch.set_grad_enabled(train_it):
+                terms[pr] = scal_terms(model, ctx_emb, u, ctx_act,
+                                       eps=cfg.loss.scal.eps, probe=pr)
+        output['scal_loss'] = terms[probe][cfg.loss.scal.norm].mean()
         if lambd_scal > 0:
             total_loss = total_loss + lambd_scal * output['scal_loss']
+        r, v = terms['random'], terms['u']
         metrics.update({
-            'scal_pdf': scal['pdf'].mean(), 'scal_inv': scal['inv'].mean(),
-            'gamma_mean': scal['gamma'].mean(), 'gamma_std': scal['gamma'].std(),
-            'jw_norm': scal['jw'].mean(), 'u_norm': u.float().norm(dim=-1).mean(),
+            # sonde aleatoire
+            'scal_pdf': r['pdf'].mean(), 'scal_inv': r['inv'].mean(),
+            'gamma_mean': r['gamma'].mean(), 'gamma_std': r['gamma'].std(),
+            'jw_norm': r['jw'].mean(),
+            # sonde le long de u_t : gain, gamma et alignement dans la direction visitee
+            'u_scal_inv': v['inv'].mean(), 'u_gamma_mean': v['gamma'].mean(),
+            'u_gamma_std': v['gamma'].std(), 'u_jw_norm': v['jw'].mean(),
+            'u_cos': (v['gamma'] / v['jw'].clamp_min(1e-12)).mean(),
+            'u_norm': u[:, -1].float().norm(dim=-1).mean(),
         })
+        # Ablation : h_theta utilise-t-il la vitesse ? Erreur de prediction au
+        # dernier pas quand u est remplace par 0, ou par le u d'un autre echantillon.
+        with torch.no_grad():
+            tgt = tgt_emb[:, -1].float()
+            var = tgt.var(0).mean()
+            perm = torch.randperm(u.size(0), device=u.device)
+            for name, u_alt in (('abl_u0_nmse', torch.zeros_like(u)),
+                                ('abl_ushuf_nmse', u[perm])):
+                pred = (ctx_emb + model.h(ctx_emb, u_alt, ctx_act))[:, -1].float()
+                metrics[name] = (pred - tgt).pow(2).mean() / var
 
     if lambd_jac > 0:
         # Action brute (pre-encodage) de la derniere position de la fenetre :
