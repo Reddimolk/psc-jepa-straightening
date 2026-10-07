@@ -63,13 +63,12 @@ def main():
 
     from stable_worldmodel.data.formats.lance import LanceWriter
     jobs = [(a.env, 1000 + i, a.length, a.rho) for i in range(a.episodes)]
+    # par paquets de 200 épisodes : la mémoire du processus principal reste
+    # bornée (sinon les épisodes rendus s'accumulent plus vite qu'ils ne sont écrits)
     with Pool(a.workers) as pool, LanceWriter(a.out, mode='overwrite') as w:
-        def eps():
-            for i, ep in enumerate(pool.imap(episode, jobs, chunksize=4)):
-                if (i + 1) % 100 == 0:
-                    print(f'{i + 1}/{a.episodes} épisodes', flush=True)
-                yield ep
-        w.write_episodes(eps())
+        for c in range(0, len(jobs), 200):
+            w.write_episodes(pool.map(episode, jobs[c:c + 200], chunksize=4))
+            print(f'{min(c + 200, a.episodes)}/{a.episodes} épisodes', flush=True)
     print('OK', a.out)
 
 
