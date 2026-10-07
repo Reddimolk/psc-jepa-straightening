@@ -28,6 +28,8 @@ plan_config:
 eval:
   num_eval: 100
   goal_offset_steps: 25
+  min_goal_dist: 0.5   # rad : buts non triviaux seulement
+  goal_dist_wrap: true
   eval_budget: 50
   img_size: 224
   dataset_name: pendulum/train.lance

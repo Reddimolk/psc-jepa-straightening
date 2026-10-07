@@ -157,6 +157,17 @@ def run(cfg: DictConfig):
 
     # remove all the lines of dataset for which dataset['step_idx'] > max_start_per_row
     valid_mask = dataset.get_col_data('step_idx') <= max_start_per_row
+    # PSC : buts non triviaux seulement (eval.min_goal_dist) : la premiere
+    # coordonnee de `state` (angle ou position) doit bouger d'au moins ce seuil
+    # entre le depart et le but, sinon "ne rien faire" reussit (ex. voiture
+    # bloquee contre le mur de MountainCar). eval.goal_dist_wrap : angle.
+    if cfg.eval.get('min_goal_dist'):
+        s0 = dataset.get_col_data('state')[:, 0].astype(np.float64)
+        rows = np.nonzero(valid_mask)[0]
+        d = s0[rows + cfg.eval.goal_offset_steps] - s0[rows]
+        if cfg.eval.get('goal_dist_wrap', False):
+            d = np.arctan2(np.sin(d), np.cos(d))
+        valid_mask[rows[np.abs(d) < cfg.eval.min_goal_dist]] = False
     valid_indices = np.nonzero(valid_mask)[0]
     print(valid_mask.sum(), 'valid starting points found for evaluation.')
 

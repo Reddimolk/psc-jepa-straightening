@@ -28,6 +28,7 @@ plan_config:
 eval:
   num_eval: 100
   goal_offset_steps: 25
+  min_goal_dist: 0.1   # buts non triviaux seulement (voiture bloquee au mur)
   eval_budget: 50
   img_size: 224
   dataset_name: mountaincar/train.lance
