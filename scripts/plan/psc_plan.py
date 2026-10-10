@@ -84,6 +84,13 @@ class BoundedGradientSolver(GradientSolver):
     def set_bounds(self, low, high):
         self.low, self.high = float(low), float(high)
 
+    def init_action(self, n_envs, actions=None):
+        # 0.1.1 laisse sur CPU un plan de depart (warm start) qui couvre deja tout
+        # l'horizon, puis lui ajoute un bruit tire sur le GPU -> erreur de device
+        if actions is not None:
+            actions = actions.to(device=self.device, dtype=self.dtype)
+        return super().init_action(n_envs, actions)
+
     def solve(self, info_dict, init_action=None):
         if self.low is None:
             return super().solve(info_dict, init_action)
