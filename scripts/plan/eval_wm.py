@@ -13,6 +13,7 @@ from pathlib import Path
 # _target_ dans le config.json du checkpoint -> scripts/train doit etre importable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'train'))
 import gym_goal  # noqa: E402,F401  (enregistre psc/PendulumGoal-v0, psc/MountainCarGoal-v0)
+import psc_plan  # noqa: E402  (contexte de H frames, solveur a gradient borne, oracle)
 
 import hydra
 import numpy as np
@@ -107,7 +108,13 @@ def run(cfg: DictConfig):
     # -- run evaluation
     policy = cfg.get('policy', 'random')
 
-    if policy != 'random':
+    # PSC : nombre de frames de contexte donnees au planificateur (H), 1 = 0.1.1
+    context = int(cfg.get('context', 1))
+
+    if policy == 'oracle':
+        policy = psc_plan.OraclePolicy(check_step=cfg.eval.goal_offset_steps, seed=cfg.seed,
+                                       **cfg.get('oracle', {}))
+    elif policy != 'random':
         model = swm.wm.utils.load_pretrained(cfg.policy)
         if cfg.get('bf16', False):
             model = model.to(torch.bfloat16)
@@ -125,10 +132,18 @@ def run(cfg: DictConfig):
                 torch.compile(getattr(model, encoder_attr)),
             )
             model.predictor = torch.compile(model.predictor)
+        psc_plan.install_history_rollout(model)   # H frames + actions passees
         config = swm.PlanConfig(**cfg.plan_config)
         solver = hydra.utils.instantiate(cfg.solver, model=model)
-        policy = swm.policy.WorldModelPolicy(
-            solver=solver, config=config, process=process, transform=transform
+        if hasattr(solver, 'set_bounds') and 'action' in process:
+            # bornes de l'action de l'environnement, en unites normalisees
+            sp = world.envs.single_action_space
+            sc = process['action']
+            solver.set_bounds((float(sp.low[0]) - sc.mean_[0]) / sc.scale_[0],
+                              (float(sp.high[0]) - sc.mean_[0]) / sc.scale_[0])
+        policy = psc_plan.HistoryPolicy(
+            solver=solver, config=config, process=process, transform=transform,
+            context=context,
         )
 
     else:
@@ -157,6 +172,10 @@ def run(cfg: DictConfig):
 
     # remove all the lines of dataset for which dataset['step_idx'] > max_start_per_row
     valid_mask = dataset.get_col_data('step_idx') <= max_start_per_row
+    # PSC : depart a au moins eval.min_start pas du debut de l'episode, pour que
+    # le passe (frames + actions) existe ; meme valeur pour tous les H -> memes
+    # problemes depart/but quel que soit le contexte
+    valid_mask &= dataset.get_col_data('step_idx') >= cfg.eval.get('min_start', 0)
     # PSC : buts non triviaux seulement (eval.min_goal_dist) : la premiere
     # coordonnee de `state` (angle ou position) doit bouger d'au moins ce seuil
     # entre le depart et le but, sinon "ne rien faire" reussit (ex. voiture
@@ -191,6 +210,16 @@ def run(cfg: DictConfig):
         )
 
     world.set_policy(policy)
+
+    if isinstance(policy, psc_plan.HistoryPolicy) and context > 1:
+        # passe de chaque probleme : les `span` pas du dataset avant le depart
+        span = cfg.plan_config.action_block * (context - 1)
+        starts = np.asarray(eval_start_idx)
+        chunks = dataset.load_chunk(np.asarray(eval_episodes), starts - span, starts)
+        frames = [[np.asarray(f.permute(1, 2, 0) if torch.is_tensor(f) else np.transpose(f, (1, 2, 0)),
+                              dtype=np.uint8) for f in ch['pixels']] for ch in chunks]
+        acts = [[np.asarray(a, dtype=np.float32).reshape(-1) for a in ch['action']] for ch in chunks]
+        policy.set_initial_history(frames, acts)
 
     results_path.mkdir(parents=True, exist_ok=True)
     print(
@@ -247,6 +276,8 @@ def run(cfg: DictConfig):
         # sur les memes paires depart/but pour tous les modeles a seed egale)
         out = {
             'policy': str(cfg.policy),
+            'context': context,
+            'solver': str(cfg.solver.get('_target_', '')),
             'seed': int(cfg.seed),
             'num_eval': int(cfg.eval.num_eval),
             'success_rate': float(metrics['success_rate']),

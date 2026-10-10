@@ -1,0 +1,17 @@
+# PSC : planification par gradient (Adam sur la sequence d'actions, a travers le
+# modele), actions bornees. C'est le regime vise par le Theoreme 4.4 (conditionnement
+# du Hessien de planification). 32 initialisations en parallele, la meilleure gardee.
+_target_: psc_plan.BoundedGradientSolver
+model: ???
+n_steps: 50
+batch_size: 1
+num_samples: 32
+var_scale: 1.0
+action_noise: 0
+device: "cuda"
+seed: ${seed}
+optimizer_cls:
+  _target_: hydra.utils.get_class
+  path: torch.optim.Adam
+optimizer_kwargs:
+  lr: 0.1

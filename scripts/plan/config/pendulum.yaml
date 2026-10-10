@@ -28,6 +28,7 @@ plan_config:
 eval:
   num_eval: 100
   goal_offset_steps: 25
+  min_start: 10        # passe disponible pour H <= 3 (memes problemes pour tout H)
   min_goal_dist: 0.5   # rad : buts non triviaux seulement
   goal_dist_wrap: true
   eval_budget: 50
@@ -44,6 +45,7 @@ eval:
           value: goal_state
 
 # PSC
+context: 1           # frames de contexte donnees au planificateur (1, 2 ou 3)
 video: false
 device: cuda
 
