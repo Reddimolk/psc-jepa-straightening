@@ -293,6 +293,11 @@ def run(cfg):
     ##############################
 
     world_model = hydra.utils.instantiate(cfg.model)
+    if cfg.get('grad_ckpt', False):
+        # PSC (13/10/2026) : recalcul des activations de l'encodeur ViT pendant la
+        # retropropagation (memoire GPU divisee, ~30 % de calcul en plus, gradients
+        # identiques) -- necessaire pour les fenetres de 8 frames (loss.multi.k = 5)
+        world_model.encoder.gradient_checkpointing_enable()
 
     total_steps = cfg.trainer.max_epochs * len(train)
     optimizers = {
