@@ -15,6 +15,10 @@ set -u
 KEEP=$1; shift
 EVAL=
 if [ "${1:-}" = --eval ]; then EVAL=$2; shift 2; fi
+# --eval-grid <env> : apres l'entrainement, grille de planification (run_eval_grid.sh,
+# solveurs/contextes via SOLVERS et CONTEXTS) puis erreur de rollout (run_rollout.sh)
+EVAL_GRID=
+if [ "${1:-}" = --eval-grid ]; then EVAL_GRID=$2; shift 2; fi
 EVAL_ENV=${EVAL%%,*}
 EVAL_ARGS=$( [ "$EVAL" != "$EVAL_ENV" ] && echo "${EVAL#*,}" | tr ',' ' ' )
 JID=$(basename "$PSC_RUN_DIR")
@@ -62,5 +66,11 @@ if [ -n "$EVAL" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
         echo "eval exit $ERC (essai $TRY)" > "$PSC_RUN_DIR/eval_exit_code"
         if [ $ERC -eq 0 ] || [ $STOP -eq 1 ]; then break; fi
     done
+fi
+if [ -n "$EVAL_GRID" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
+    # contexte 1 omis par defaut : planification impossible sans vitesse (campagne ev2)
+    CONTEXTS="${CONTEXTS:-2 3}" run bash scripts/cluster/run_eval_grid.sh "$EVAL_GRID" "$JID" eval.num_eval=100
+    echo "eval_grid exit $?" > "$PSC_RUN_DIR/eval_exit_code"
+    [ $STOP -eq 0 ] && run bash scripts/cluster/run_rollout.sh "$EVAL_GRID" "$JID"
 fi
 exit $RC

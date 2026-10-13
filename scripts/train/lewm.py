@@ -92,7 +92,9 @@ def lejepa_forward(self, batch, stage, cfg):
     ctx_emb = emb[:, :ctx_len]
     ctx_act = act_emb[:, :ctx_len]
 
-    tgt_emb = emb[:, n_preds:]  # label
+    # label : les ctx_len frames suivantes (la fenetre peut etre plus longue
+    # quand loss.multi.k > 1 : num_steps = history_size + k)
+    tgt_emb = emb[:, n_preds:n_preds + ctx_len]  # label
     pred_emb = self.model.predict(ctx_emb, ctx_act)  # pred
 
     # Idee 9 (espace des phases) : u_0 = z_0 - z_{-1} est inconnu (u_0 = 0 par
@@ -194,6 +196,30 @@ def lejepa_forward(self, batch, stage, cfg):
         )
         output['jac_loss'] = (1 - cos_jac).mean()
         total_loss = total_loss + lambd_jac * output['jac_loss']
+
+    # Loss sur plusieurs blocs (13/10/2026) : a partir des ctx_len vraies frames, le
+    # modele enchaine k predictions en reutilisant les siennes (comme le planificateur),
+    # avec les vraies actions ; on penalise l'erreur moyenne sur les k blocs, gradient
+    # propage a travers toute la chaine. Vise la derive d'integration de l'Idee 9.
+    k_multi = int(cfg.loss.get('multi', {}).get('k', 0))
+    if k_multi > 1:
+        assert emb.size(1) >= ctx_len + k_multi, (
+            f'fenetre trop courte : data.dataset.num_steps doit valoir >= {ctx_len + k_multi}')
+        roll = list(emb[:, :ctx_len].unbind(1))
+        errs = []
+        for t in range(k_multi):
+            lo = len(roll) - ctx_len
+            nxt = self.model.predict(torch.stack(roll[lo:], 1),
+                                     act_emb[:, lo:ctx_len + t])[:, -1]
+            roll.append(nxt)
+            errs.append((nxt - emb[:, ctx_len + t]).pow(2).mean())
+        output['multi_loss'] = torch.stack(errs).mean()
+        total_loss = total_loss + cfg.loss.multi.weight * output['multi_loss']
+        with torch.no_grad():
+            for t in (0, k_multi - 1):
+                tgt = emb[:, ctx_len + t].float()
+                metrics[f'roll_k{t + 1}_nmse'] = (
+                    (roll[ctx_len + t].float() - tgt).pow(2).mean() / tgt.var(0).mean())
 
     output['loss'] = total_loss
 

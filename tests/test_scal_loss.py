@@ -223,7 +223,49 @@ def test_lejepa_forward():
             f'{k}={out[k].item():.4f}' for k in ('pred_loss', 'scal_loss', 'loss')))
 
 
+def test_multi_block_loss():
+    """loss.multi.k = 5 : fenetre de 3 + 5 frames, rollout de 5 blocs differentiable,
+    pour LeWM (base) comme pour l'Idee 9 avec historique."""
+    from omegaconf import OmegaConf
+    from stable_worldmodel.wm.loss import SIGReg
+    from stable_worldmodel.wm.lewm import LeWM
+    os.environ.pop('PSC_RUN_DIR', None)
+    import lewm
+
+    cfg = OmegaConf.create({
+        'wm': {'history_size': 3, 'num_preds': 1, 'phase_include_first': True},
+        'loss': {'sigreg': {'weight': 0.09}, 'jac': {'weight': 0.0, 'eps': 1e-2},
+                 'scal': {'weight': 0.1, 'eps': 1e-2, 'norm': 'inv', 'probe': 'u'},
+                 'multi': {'k': 5, 'weight': 1.0}}})
+    for kind in ('base', 'hist'):
+        m = tiny_phase_model(True)
+        if kind == 'base':
+            m = LeWM(m.encoder, m.predictor, m.action_encoder, m.projector, m.pred_proj)
+
+        class Host(nn.Module):
+            current_epoch, global_step = 0, 0
+
+            def __init__(self):
+                super().__init__()
+                self.model = m
+                self.sigreg = SIGReg(knots=17, num_proj=64)
+
+            def log_dict(self, *a, **k):
+                pass
+
+        h = Host().train()
+        batch = {'pixels': torch.randn(8, 8, 3, 8, 8), 'action': torch.randn(8, 8, A)}
+        with torch.autocast('cpu', dtype=torch.bfloat16):
+            out = lewm.lejepa_forward(h, batch, 'fit', cfg)
+        out['loss'].backward()
+        assert torch.isfinite(out['multi_loss']) and out['multi_loss'] > 0
+        assert m.predictor.pos_embedding.grad is not None
+        print(f"loss multi-blocs ({kind}) : pred_loss={out['pred_loss'].item():.4f} "
+              f"multi_loss={out['multi_loss'].item():.4f}")
+
+
 if __name__ == '__main__':
+    test_multi_block_loss()
     test_scalar_jacobian()
     test_anisotropic_jacobian()
     test_aristote_trivial()
