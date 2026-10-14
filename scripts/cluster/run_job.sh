@@ -68,8 +68,8 @@ if [ -n "$EVAL" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
     done
 fi
 if [ -n "$EVAL_GRID" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
-    # contexte 1 omis par defaut : planification impossible sans vitesse (campagne ev2)
-    CONTEXTS="${CONTEXTS:-2 3}" run bash scripts/cluster/run_eval_grid.sh "$EVAL_GRID" "$JID" eval.num_eval=100
+    # contexte 2 seul par defaut : 1 = planification impossible sans vitesse, 3 = meme resultat que 2 (ev2)
+    CONTEXTS="${CONTEXTS:-2}" run bash scripts/cluster/run_eval_grid.sh "$EVAL_GRID" "$JID" eval.num_eval=100
     echo "eval_grid exit $?" > "$PSC_RUN_DIR/eval_exit_code"
     [ $STOP -eq 0 ] && run bash scripts/cluster/run_rollout.sh "$EVAL_GRID" "$JID"
 fi

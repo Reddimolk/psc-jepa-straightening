@@ -92,6 +92,9 @@ loss:
     kwargs:
       knots: 17
       num_proj: 1024
+  # L_curv du papier Temporal Straightening : 1 - cos(v_t, v_{t+1}) sur l'encodeur (poids alpha)
+  curv:
+    weight: 0.0
   # loss sur plusieurs blocs : k > 1 l'active (avec data.dataset.num_steps = history_size + k)
   multi:
     k: 0

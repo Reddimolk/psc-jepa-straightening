@@ -236,7 +236,7 @@ def test_multi_block_loss():
         'wm': {'history_size': 3, 'num_preds': 1, 'phase_include_first': True},
         'loss': {'sigreg': {'weight': 0.09}, 'jac': {'weight': 0.0, 'eps': 1e-2},
                  'scal': {'weight': 0.1, 'eps': 1e-2, 'norm': 'inv', 'probe': 'u'},
-                 'multi': {'k': 5, 'weight': 1.0}}})
+                 'multi': {'k': 5, 'weight': 1.0}, 'curv': {'weight': 0.1}}})
     for kind in ('base', 'hist'):
         m = tiny_phase_model(True)
         if kind == 'base':
@@ -259,9 +259,10 @@ def test_multi_block_loss():
             out = lewm.lejepa_forward(h, batch, 'fit', cfg)
         out['loss'].backward()
         assert torch.isfinite(out['multi_loss']) and out['multi_loss'] > 0
+        assert torch.isfinite(out['curv_loss']) and 0 <= out['curv_loss'] <= 2
         assert m.predictor.pos_embedding.grad is not None
         print(f"loss multi-blocs ({kind}) : pred_loss={out['pred_loss'].item():.4f} "
-              f"multi_loss={out['multi_loss'].item():.4f}")
+              f"multi_loss={out['multi_loss'].item():.4f} curv_loss={out['curv_loss'].item():.4f}")
 
 
 if __name__ == '__main__':

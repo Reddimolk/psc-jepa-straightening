@@ -197,6 +197,17 @@ def lejepa_forward(self, batch, stage, cfg):
         output['jac_loss'] = (1 - cos_jac).mean()
         total_loss = total_loss + lambd_jac * output['jac_loss']
 
+    # L_curv (Temporal Straightening, Wang et al. 2026 ; 14/10/2026) : redresse les
+    # trajectoires de l'encodeur, 1 - cos(v_t, v_{t+1}) avec v_t = z_{t+1} - z_t, sur
+    # toute la fenetre. Poids alpha = loss.curv.weight ; mesuree aussi quand alpha = 0.
+    v_enc = emb[:, 1:] - emb[:, :-1]
+    cos_v = torch.nn.functional.cosine_similarity(
+        v_enc[:, 1:].float(), v_enc[:, :-1].float(), dim=-1)
+    output['curv_loss'] = (1 - cos_v).mean()
+    alpha_curv = float(cfg.loss.get('curv', {}).get('weight', 0.0))
+    if alpha_curv > 0:
+        total_loss = total_loss + alpha_curv * output['curv_loss']
+
     # Loss sur plusieurs blocs (13/10/2026) : a partir des ctx_len vraies frames, le
     # modele enchaine k predictions en reutilisant les siennes (comme le planificateur),
     # avec les vraies actions ; on penalise l'erreur moyenne sur les k blocs, gradient
