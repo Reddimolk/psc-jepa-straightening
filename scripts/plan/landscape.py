@@ -71,6 +71,7 @@ def main():
     p.add_argument('--inits', type=int, default=16)
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--lr', type=float, default=0.1)
+    p.add_argument('--chunk', type=int, default=1024, help='sequences optimisees a la fois')
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--datasets', default=None, help='dossier des datasets (défaut : $STABLEWM_HOME/datasets)')
     a = p.parse_args()
@@ -106,28 +107,34 @@ def main():
     lo, hi = norm(-AMAX[a.data]), norm(AMAX[a.data])
     vals = np.linspace(-AMAX[a.data], AMAX[a.data], a.grid)
     g1, g2 = np.meshgrid(vals, vals, indexing='ij')
-    fixed = torch.tensor(np.stack([norm(g1.ravel()), norm(g2.ravel())], -1), device=dev)
-    fixed = fixed.repeat_interleave(a.inits, 0).unsqueeze(-1).expand(-1, 2, FS)   # (N, 2, FS)
-    N = fixed.size(0)
-    free = torch.randn(N, HORIZON - 2, FS, device=dev, generator=torch.Generator(dev).manual_seed(a.seed))
-    free = free.clamp(lo, hi).requires_grad_(True)
-    opt = torch.optim.Adam([free], lr=a.lr)
+    fixed_all = torch.tensor(np.stack([norm(g1.ravel()), norm(g2.ravel())], -1), device=dev)
+    fixed_all = fixed_all.repeat_interleave(a.inits, 0).unsqueeze(-1).expand(-1, 2, FS)   # (N, 2, FS)
+    free_all = torch.randn(fixed_all.size(0), HORIZON - 2, FS, device=dev,
+                           generator=torch.Generator(dev).manual_seed(a.seed)).clamp(lo, hi)
 
-    def cost(free_acts):
-        seq = torch.cat([fixed, free_acts], 1).unsqueeze(0)     # (1, N, HORIZON, FS)
-        info = {'pixels': ctx.unsqueeze(1).expand(1, N, *ctx.shape[1:]),
-                'action_history': hist.expand(1, N, 1, FS), 'emb': ctx_emb.unsqueeze(1).expand(1, N, -1, -1)}
-        pred = model.rollout(info, seq)['predicted_emb'][0, :, -1]   # (N, D)
+    def cost(fixed, free_acts):
+        n = fixed.size(0)
+        seq = torch.cat([fixed, free_acts], 1).unsqueeze(0)     # (1, n, HORIZON, FS)
+        info = {'pixels': ctx.unsqueeze(1).expand(1, n, *ctx.shape[1:]),
+                'action_history': hist.expand(1, n, 1, FS), 'emb': ctx_emb.unsqueeze(1).expand(1, n, -1, -1)}
+        pred = model.rollout(info, seq)['predicted_emb'][0, :, -1]   # (n, D)
         return (pred - goal_emb).pow(2).sum(-1)
 
-    for _ in range(a.steps):
-        opt.zero_grad()
-        cost(free).sum().backward()
-        opt.step()
+    # par morceaux de --chunk sequences (7 056 d'un coup depassent la memoire GPU)
+    costs = []
+    for i in range(0, fixed_all.size(0), a.chunk):
+        fixed = fixed_all[i:i + a.chunk]
+        free = free_all[i:i + a.chunk].clone().requires_grad_(True)
+        opt = torch.optim.Adam([free], lr=a.lr)
+        for _ in range(a.steps):
+            opt.zero_grad()
+            cost(fixed, free).sum().backward()
+            opt.step()
+            with torch.no_grad():
+                free.clamp_(lo, hi)
         with torch.no_grad():
-            free.clamp_(lo, hi)
-    with torch.no_grad():
-        c = cost(free).view(a.grid, a.grid, a.inits).min(-1).values.cpu().numpy()
+            costs.append(cost(fixed, free))
+    c = torch.cat(costs).view(a.grid, a.grid, a.inits).min(-1).values.cpu().numpy()
 
     # ---- Figure 2 : trajectoire latente de l'épisode
     full = ds.load_chunk(np.array([ep]), np.array([0]), np.array([int(ds.lengths[ep])]))[0]
