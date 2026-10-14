@@ -72,5 +72,9 @@ if [ -n "$EVAL_GRID" ] && [ $RC -eq 0 ] && [ $STOP -eq 0 ] && [ -n "$W" ]; then
     CONTEXTS="${CONTEXTS:-2}" run bash scripts/cluster/run_eval_grid.sh "$EVAL_GRID" "$JID" eval.num_eval=100
     echo "eval_grid exit $?" > "$PSC_RUN_DIR/eval_exit_code"
     [ $STOP -eq 0 ] && run bash scripts/cluster/run_rollout.sh "$EVAL_GRID" "$JID"
+    # figures 2 et 4 du papier Temporal Straightening (paysage de cout, trajectoire latente)
+    [ $STOP -eq 0 ] && ( cd scripts/plan && STABLEWM_HOME=$HOME/psc/swm_home \
+        run python landscape.py --ckpt "$W" --data "$EVAL_GRID" --out "$PSC_RUN_DIR/landscape" ) \
+        > "$PSC_RUN_DIR/landscape.log" 2>&1
 fi
 exit $RC
