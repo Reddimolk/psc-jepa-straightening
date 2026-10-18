@@ -41,7 +41,8 @@ run() {
     return $RC
 }
 
-run python scripts/train/lewm.py output_model_name="$JID" subdir="$JID" \
+# TRAIN_CONFIG (optionnel) : config hydra, ex. lewm_spatial (latent par patchs)
+run python scripts/train/lewm.py ${TRAIN_CONFIG:+--config-name "$TRAIN_CONFIG"} output_model_name="$JID" subdir="$JID" \
     hydra.run.dir="$PSC_RUN_DIR/hydra" "$@"
 RC=$?
 
