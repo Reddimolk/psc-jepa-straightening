@@ -1,0 +1,39 @@
+# Latent spatial (18/10/2026) : LeWM / Idee 9 sur P = 64 patchs de dimension 32,
+# comme Temporal Straightening. Tout le reste vient de lewm.yaml.
+#   python lewm.py --config-name lewm_spatial data=pendulum model.phase=true ...
+defaults:
+  - lewm
+  - _self_
+
+patch_pool: 2      # tokens ViT 16 x 16 regroupes 2 x 2 -> 8 x 8
+num_patches: 64
+patch_dim: 32
+
+model:
+  _target_: spatial.SpatialLeWM
+  phase: false     # true : Idee 9 (historique de 3 pas, comme campagnes c9/d9)
+  pool: ${patch_pool}
+  predictor:
+    _target_: spatial.SpatialPredictor
+    num_patches: ${num_patches}
+    input_dim: ${patch_dim}
+    hidden_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    heads: 6
+    dim_head: 32
+    mlp_dim: 768
+  projector:
+    input_dim: ${embed_dim}
+    output_dim: ${patch_dim}
+    hidden_dim: 512
+  pred_proj:
+    input_dim: ${embed_dim}
+    output_dim: ${patch_dim}
+    hidden_dim: 512
+  agg:
+    _target_: spatial.AggHead
+    num_patches: ${num_patches}
+    patch_dim: ${patch_dim}
+    kind: mlp      # mlp (appris, sortie 128) | mean (moyenne des patchs)
+    hidden_dim: 512
+    out_dim: 128

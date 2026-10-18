@@ -9,6 +9,7 @@ import stable_worldmodel as swm
 import torch
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, open_dict
+from einops import rearrange
 
 from functools import partial
 from stable_worldmodel.data import column_normalizer as get_column_normalizer
@@ -16,7 +17,7 @@ from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
-from phase_space import MetricsLog, PhaseSpaceLeWM, scal_terms
+from phase_space import MetricsLog, scal_terms
 
 # Metriques par run dans $PSC_RUN_DIR/metrics.jsonl (cf. phase_space.MetricsLog)
 METRICS = (
@@ -103,12 +104,20 @@ def lejepa_forward(self, batch, stage, cfg):
     # predire sans vitesse connue -- c'est le cas du premier pas de
     # planification (stable-worldmodel 0.1.1 ne donne qu'une frame de contexte).
     # L_scal ne porte jamais sur la position 0.
-    phase = isinstance(self.model, PhaseSpaceLeWM)
+    phase = getattr(self.model, 'phase', False)   # Idee 9 (global ou spatiale)
+    agg = getattr(self.model, 'agg', None)        # tete d'agregation (latent spatial)
+    n_patches = getattr(self.model, 'num_patches', None)
     first = 1 if phase and not cfg.wm.get('phase_include_first', False) else 0
 
     # LeWM loss
     output['pred_loss'] = (pred_emb[:, first:] - tgt_emb[:, first:]).pow(2).mean()
-    output['sigreg_loss'] = self.sigreg(emb.transpose(0, 1))
+    if n_patches:
+        # latent spatial : SIGReg par position de patch (chaque (t, i) = un « temps »
+        # de SIGReg, echantillons = le batch), meme echelle que LeWM global
+        sig_in = rearrange(emb, 'b t (p d) -> (t p) b d', p=n_patches)
+    else:
+        sig_in = emb.transpose(0, 1)
+    output['sigreg_loss'] = self.sigreg(sig_in)
     total_loss = output['pred_loss'] + lambd * output['sigreg_loss']
 
     # Metrique comparable entre tous les bras : erreur sur la derniere position
@@ -133,7 +142,7 @@ def lejepa_forward(self, batch, stage, cfg):
             train_it = pr == probe and lambd_scal > 0 and torch.is_grad_enabled()
             with torch.set_grad_enabled(train_it):
                 terms[pr] = scal_terms(model, ctx_emb, u, ctx_act,
-                                       eps=cfg.loss.scal.eps, probe=pr)
+                                       eps=cfg.loss.scal.eps, probe=pr, agg=agg)
         output['scal_loss'] = terms[probe][cfg.loss.scal.norm].mean()
         if lambd_scal > 0:
             total_loss = total_loss + lambd_scal * output['scal_loss']
@@ -201,6 +210,8 @@ def lejepa_forward(self, batch, stage, cfg):
     # trajectoires de l'encodeur, 1 - cos(v_t, v_{t+1}) avec v_t = z_{t+1} - z_t, sur
     # toute la fenetre. Poids alpha = loss.curv.weight ; mesuree aussi quand alpha = 0.
     v_enc = emb[:, 1:] - emb[:, :-1]
+    if agg is not None:   # latent spatial : sur la tete d'agregation, comme le papier
+        v_enc = agg(v_enc)
     cos_v = torch.nn.functional.cosine_similarity(
         v_enc[:, 1:].float(), v_enc[:, :-1].float(), dim=-1)
     output['curv_loss'] = (1 - cos_v).mean()

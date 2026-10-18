@@ -44,6 +44,8 @@ from stable_worldmodel.wm.lewm.module import Attention
 class PhaseSpaceLeWM(LeWM):
     """LeWM dont le predicteur agit en espace des phases (z_t, u_t)."""
 
+    phase = True  # lu par lejepa_forward (Idee 9 : vitesse, L_scal)
+
     def __init__(self, encoder, predictor, action_encoder, projector=None,
                  pred_proj=None, phase_history=False, **kwargs):
         super().__init__(encoder, predictor, action_encoder, projector,
@@ -96,7 +98,7 @@ def no_dropout(module):
             m.training = st
 
 
-def scal_terms(model, z, u, act_emb, eps=1e-2, probe='random'):
+def scal_terms(model, z, u, act_emb, eps=1e-2, probe='random', agg=None):
     """J_u w au dernier pas de la fenetre, par difference finie centree, en
     fp32, entrees detachees (L_scal ne contraint que h_theta, pas l'encodeur).
 
@@ -125,6 +127,22 @@ def scal_terms(model, z, u, act_emb, eps=1e-2, probe='random'):
     with torch.autocast(device_type=z.device.type, enabled=False), no_dropout(model):
         out = model.h(torch.cat([z, z]), torch.cat([up, um]),
                       torch.cat([a, a]))[:, -1].float()
+    if agg is not None:
+        # Latent spatial (18/10/2026) : L_scal vue a travers la tete d'agregation A.
+        # Reponse : dU_hat = [A(u_hat(u + eps w)) - A(u_hat(u - eps w))] / 2 eps.
+        # Reference : la meme perturbation w appliquee directement en sortie,
+        # dU = [A(u_hat + eps w) - A(u_hat - eps w)] / 2 eps (A linearisee au meme
+        # point) : si J_u = gamma I, dU_hat = gamma dU exactement au 1er ordre, meme
+        # avec A non lineaire. On veut dU_hat colineaire a dU (w -> dU / ||dU||).
+        # Les parametres de A recoivent le gradient (tete apprise, comme le papier).
+        c = ((out[:n] + out[n:]) / 2).detach()
+        with torch.autocast(device_type=z.device.type, enabled=False):
+            a_in = agg(torch.cat([c + eps * w, c - eps * w])).float()
+            a_out = agg(out).float()
+        w = (a_in[:n] - a_in[n:]) / (2 * eps)
+        scale = w.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        w = w / scale
+        out = a_out / scale.repeat(2, 1)   # gamma et jw dans l'unite de dU (gamma = 0.8 si J_u = 0.8 I)
     jw = (out[:n] - out[n:]) / (2 * eps)
     gamma = (w * jw).sum(-1)
     res = (jw - gamma.unsqueeze(-1) * w).pow(2).sum(-1)
