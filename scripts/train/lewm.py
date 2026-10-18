@@ -115,6 +115,11 @@ def lejepa_forward(self, batch, stage, cfg):
         # latent spatial : SIGReg par position de patch (chaque (t, i) = un « temps »
         # de SIGReg, echantillons = le batch), meme echelle que LeWM global
         sig_in = rearrange(emb, 'b t (p d) -> (t p) b d', p=n_patches)
+        # T * P = 512 positions -> tenseur de SIGReg de 4,5 Go : estimation sans biais
+        # de la moyenne sur loss.sigreg.max_slots positions tirees a chaque iteration
+        k = int(cfg.loss.sigreg.get('max_slots', 32))
+        if sig_in.size(0) > k:
+            sig_in = sig_in[torch.randperm(sig_in.size(0), device=sig_in.device)[:k]]
     else:
         sig_in = emb.transpose(0, 1)
     output['sigreg_loss'] = self.sigreg(sig_in)
