@@ -30,6 +30,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from stable_worldmodel.wm.lewm import LeWM
 from stable_worldmodel.wm.lewm.module import (
@@ -58,7 +59,11 @@ class SpatialBlock(ConditionalBlock):
 
 
 class SpatialPredictor(nn.Module):
-    """x (B, T, P, input_dim), c (B, T, hidden_dim) -> (B, T, P, hidden_dim)."""
+    """x (B, T, P, input_dim), c (B, T, hidden_dim) -> (B, T, P, hidden_dim).
+    grad_ckpt (pose par lewm.py avec +grad_ckpt=true) : activations des blocs
+    recalculees a la retropropagation (T * P tokens : sinon > 24 Go avec loss.multi)."""
+
+    grad_ckpt = False
 
     def __init__(self, *, num_frames, num_patches, depth, heads, mlp_dim, input_dim,
                  hidden_dim, output_dim=None, dim_head=64, dropout=0.0, emb_dropout=0.0):
@@ -79,9 +84,17 @@ class SpatialPredictor(nn.Module):
         c = c.unsqueeze(2).expand(-1, -1, p, -1).reshape(b, t * p, -1)
         frame = torch.arange(t, device=x.device).repeat_interleave(p)
         mask = frame[None, :] <= frame[:, None]          # image du token vu <= la sienne
-        for blk in self.transformer.layers:
+        tr = self.transformer
+        x, c = tr.input_proj(x), tr.cond_proj(c)
+        for blk in tr.layers:
             blk.attn.mask = mask
-        out = self.transformer(x, c)
+            # pas de recalcul sous phase_space.no_dropout (passe de L_scal) : le
+            # dropout serait rallume au moment du recalcul
+            if self.grad_ckpt and torch.is_grad_enabled() and blk.attn.training == self.training:
+                x = checkpoint(blk, x, c, use_reentrant=False)
+            else:
+                x = blk(x, c)
+        out = tr.output_proj(tr.norm(x))
         return rearrange(out, 'b (t p) d -> b t p d', t=t)
 
 

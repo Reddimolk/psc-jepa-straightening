@@ -320,6 +320,8 @@ def run(cfg):
         # retropropagation (memoire GPU divisee, ~30 % de calcul en plus, gradients
         # identiques) -- necessaire pour les fenetres de 8 frames (loss.multi.k = 5)
         world_model.encoder.gradient_checkpointing_enable()
+        if hasattr(world_model.predictor, 'grad_ckpt'):   # predicteur spatial
+            world_model.predictor.grad_ckpt = True
 
     total_steps = cfg.trainer.max_epochs * len(train)
     optimizers = {

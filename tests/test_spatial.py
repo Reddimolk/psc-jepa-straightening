@@ -137,8 +137,9 @@ def test_lejepa_forward():
         'loss': {'sigreg': {'weight': 0.09}, 'jac': {'weight': 0.0, 'eps': 1e-2},
                  'scal': {'weight': 0.1, 'eps': 1e-2, 'norm': 'inv', 'probe': 'u'},
                  'multi': {'k': 5, 'weight': 1.0}, 'curv': {'weight': 0.1}}})
-    for phase in (False, True):
+    for phase, ckpt in ((False, False), (True, False), (True, True)):
         m = tiny(phase)
+        m.predictor.grad_ckpt = ckpt
 
         class Host(nn.Module):
             current_epoch, global_step = 0, 0
@@ -162,7 +163,7 @@ def test_lejepa_forward():
         assert m.encoder.lin.weight.grad is not None
         if phase:
             assert torch.isfinite(out['scal_loss']) and m.phase_proj.weight.grad is not None
-        print(f'lejepa_forward (phase={phase}) : ' + ' '.join(
+        print(f'lejepa_forward (phase={phase}, ckpt={ckpt}) : ' + ' '.join(
             f'{k}={out[k].item():.4f}' for k in out if 'loss' in k))
 
 
